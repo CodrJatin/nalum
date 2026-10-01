@@ -15,6 +15,7 @@ export interface AlumniProfile {
   };
   batch: string;
   branch: string;
+  department?: string;
   campus: string;
   current_company?: string;
   current_role?: string;
@@ -47,6 +48,7 @@ interface SearchParams {
   city?: string;
   country?: string;
   skills?: string;
+  role?: string;
 }
 
 export const useAlumniDirectory = () => {
@@ -123,6 +125,7 @@ export const useAlumniDirectory = () => {
       if (filters.city) params.city = filters.city;
       if (filters.country) params.country = filters.country;
       if (filters.skills.length > 0) params.skills = filters.skills.join(",");
+      if (filters.roleFilter !== "all") params.role = filters.roleFilter;
 
       const response = await api.get("/profile/search", {
         params,
@@ -147,11 +150,6 @@ export const useAlumniDirectory = () => {
       setAlumni([]);
       toast.error("Failed to load alumni", {
         description: "Please try again later",
-        style: {
-          background: "#800000",
-          color: "white",
-          border: "2px solid #FFD700",
-        },
       });
     } finally {
       setIsLoading(false);
@@ -296,25 +294,11 @@ export const useAlumniDirectory = () => {
       // Refresh the alumni list to update connection status
       fetchAlumni(currentPage);
 
-      toast.success("Connection request sent!", {
-        duration: 2000,
-        style: {
-          background: "#10b981",
-          color: "white",
-          border: "2px solid #059669",
-        },
-      });
+      toast.success("Connection request sent!", { duration: 2000 });
     } catch (error: any) {
       console.error("Error sending connection request:", error);
       toast.error(
-        error.response?.data?.message || "Failed to send connection request",
-        {
-          style: {
-            background: "#800000",
-            color: "white",
-            border: "2px solid #FFD700",
-          },
-        }
+        error.response?.data?.message || "Failed to send connection request"
       );
     }
   };
@@ -327,13 +311,6 @@ export const useAlumniDirectory = () => {
         if (alumnus.connectionStatus !== "accepted") return false;
       } else if (filters.connectionFilter === "not_connected") {
         if (alumnus.connectionStatus === "accepted") return false;
-      }
-
-      // Apply role filter
-      if (filters.roleFilter === "alumni") {
-        if (alumnus.user.role !== "alumni") return false;
-      } else if (filters.roleFilter === "student") {
-        if (alumnus.user.role !== "student") return false;
       }
 
       return true;

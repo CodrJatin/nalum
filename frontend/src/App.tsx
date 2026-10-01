@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -12,10 +11,10 @@ import {
   AuthenticatedCacheBoundary,
   ConnectionLifecycleSync,
 } from "@/components/AppLifecycleSync";
-import { LoadingAnimation } from "@/components/LoadingAnimation";
-import { useLocation } from "react-router-dom";
 import { usePageTracking } from "@/hooks/usePageTracking";
 import { AxiosError } from "axios";
+import { GoogleOAuthProvider } from '@react-oauth/google';
+
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,8 +33,6 @@ const queryClient = new QueryClient({
 
 function AppContent() {
   const { isLoading } = useAuth();
-  const location = useLocation();
-  const [showIntro, setShowIntro] = useState(location.pathname === "/");
 
   usePageTracking();
 
@@ -48,9 +45,6 @@ function AppContent() {
   return (
     <>
       <AuthErrorHandler />
-      {showIntro && (
-        <LoadingAnimation onAnimationComplete={() => setShowIntro(false)} />
-      )}
       <TooltipProvider>
         <AppRoutes />
         <Toaster />
@@ -60,19 +54,22 @@ function AppContent() {
 }
 
 function App() {
+  console.log("GOOGLE_CLIENT_ID is:", import.meta.env.VITE_GOOGLE_CLIENT_ID);
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <AuthenticatedCacheBoundary>
-          <SocketProvider>
-            <NotificationProvider>
-              <ConnectionLifecycleSync />
-              <AppContent />
-            </NotificationProvider>
-          </SocketProvider>
-        </AuthenticatedCacheBoundary>
-      </AuthProvider>
-    </QueryClientProvider>
+    <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ""}>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <AuthenticatedCacheBoundary>
+            <SocketProvider>
+              <NotificationProvider>
+                <ConnectionLifecycleSync />
+                <AppContent />
+              </NotificationProvider>
+            </SocketProvider>
+          </AuthenticatedCacheBoundary>
+        </AuthProvider>
+      </QueryClientProvider>
+    </GoogleOAuthProvider>
   );
 }
 

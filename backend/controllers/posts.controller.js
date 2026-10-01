@@ -3,7 +3,7 @@ const Comment = require("../models/posts/comment.model");
 const User = require("../models/user/user.model");
 const Profile = require("../models/user/profile.model");
 const Settings = require("../models/admin/settings.model");
-const { notifyMentions } = require("../services/mentionHelper");
+const { notifyMentions, extractSpecialMentionGroups } = require("../services/mentionHelper");
 const { queueAdminPostBroadcast } = require("../queues/emailQueue");
 const notificationService = require("../services/notificationService");
 const { assertDeletePermission } = require("../utils/deleteHelper");
@@ -15,12 +15,9 @@ const {
   visibilityFilter,
   isVisibleTo,
 } = require("../utils/postHelpers");
+const escapeRegex = require("../utils/escapeRegex");
 
 const PIN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
-
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 // Decorates lean post documents with the author's public profile fields and a
 // live comment count — both are needed by every list the dashboard renders,
@@ -90,13 +87,13 @@ exports.createPost = async (req, res) => {
       });
     }
 
-    // Allow admins and verified alumni to create posts
+    // Allow admins, verified alumni, and faculty to create posts
     if (user.role === "admin") {
       // Admins can always create posts - continue to post creation
-    } else if (user.role !== "alumni" || !user.verified_alumni) {
+    } else if (!["alumni", "faculty"].includes(user.role) || (user.role === "alumni" && !user.verified_alumni)) {
       return res.status(403).json({
         success: false,
-        message: "Only verified alumni can create posts",
+        message: "Only verified alumni and faculty can create posts",
       });
     }
 
@@ -137,7 +134,8 @@ exports.createPost = async (req, res) => {
       // If post is created by an admin and auto-approved, queue email broadcast
       if (user.role === "admin") {
         try {
-          await queueAdminPostBroadcast(post, user);
+          const recipientGroups = extractSpecialMentionGroups(content);
+          if (recipientGroups.length) await queueAdminPostBroadcast(post, user, recipientGroups);
           console.log(`[Post Create] Queued email broadcast for admin post ${post._id}`);
         } catch (error) {
           console.error(`[Post Create] Failed to queue email broadcast:`, error);
@@ -255,7 +253,7 @@ exports.searchPosts = async (req, res) => {
 
     // Find users matching the name
     const users = await User.find({
-      name: { $regex: query, $options: "i" },
+      name: { $regex: escapeRegex(query), $options: "i" },
     }).select("_id");
 
     const userIds = users.map((user) => user._id);
@@ -267,8 +265,8 @@ exports.searchPosts = async (req, res) => {
         visibilityFilter(req.user.role),
         {
           $or: [
-            { title: { $regex: query, $options: "i" } },
-            { tags: { $regex: query, $options: "i" } },
+            { title: { $regex: escapeRegex(query), $options: "i" } },
+            { tags: { $regex: escapeRegex(query), $options: "i" } },
             { userId: { $in: userIds } },
           ],
         },
@@ -522,24 +520,29 @@ exports.getMyPosts = async (req, res) => {
 
 exports.recordView = async (req, res) => {
   try {
-    const postId = req.params.id;
+    const { id } = req.params;
+    const { session_id } = req.user;
 
-    // Increment view count by 1
-    const post = await Post.findByIdAndUpdate(
-      postId,
-      { $inc: { view_count: 1 } },
+    const updated = await Post.findOneAndUpdate(
+      { _id: id, viewed_by: { $ne: session_id } },
+      { $inc: { view_count: 1 }, $addToSet: { viewed_by: session_id } },
       { new: true }
     ).select("view_count");
 
-    return res.status(200).json({
-      success: true,
-      view_count: post?.view_count || 0,
-    });
+    if (!updated) {
+      // Either the post doesn't exist, or this user already viewed it —
+      // fetch the current count either way so the response shape stays consistent.
+      const existing = await Post.findById(id).select("view_count");
+      if (!existing) {
+        return res.status(404).json({ success: false, message: "Post not found" });
+      }
+      return res.json({ success: true, view_count: existing.view_count });
+    }
+
+    return res.json({ success: true, view_count: updated.view_count });
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Error recording view",
-    });
+    console.error("Error recording post view:", error);
+    return res.status(500).json({ success: false, message: "Error recording view" });
   }
 };
 
@@ -571,14 +574,14 @@ exports.getPopularTags = async (req, res) => {
 exports.recordViewsBatch = async (req, res) => {
   try {
     const { postIds } = req.body;
+    const { session_id } = req.user;
 
     if (Array.isArray(postIds) && postIds.length > 0) {
       await Post.updateMany(
-        { _id: { $in: postIds } },
-        { $inc: { view_count: 1 } }
+        { _id: { $in: postIds }, viewed_by: { $ne: session_id } },
+        { $inc: { view_count: 1 }, $addToSet: { viewed_by: session_id } }
       );
     }
-
     return res.status(200).json({
       success: true,
       count: postIds?.length || 0,
@@ -586,7 +589,7 @@ exports.recordViewsBatch = async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       success: false,
-      message: error.message || "Error recording batch views",
+      message: error.message || "Error recording views",
     });
   }
 };
